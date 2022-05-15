@@ -1,0 +1,118 @@
+version: "3.3"
+
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    hostname: zookeeper
+    container_name: zookeeper
+    ports:
+      - 2181:2181
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    hostname: kafka
+    container_name: kafka
+    ports:
+      - 9092:9092
+      - 29092:29092
+    depends_on:
+      - zookeeper
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      - KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      - KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_LOG4J_LOGGERS="kafka.controller=INFO,kafka.request.logger=WARN"
+      - KAFKA_LOG4J_ROOT_LOGLEVEL=ERROR
+
+  computer_sensor:
+    hostname: computer_sensor
+    container_name: computer_sensor
+    image: python:3.7-alpine
+    ports:
+      - "3030:3030"
+    depends_on:
+      - kafka
+    volumes:
+      - ./computer_sensor:/home
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      pip3 install -r /home/requirements.txt  
+      python3 /home/computer_sensor.py & python3 /home/send_data_to_kafka.py
+      "
+    restart: on-failure
+
+  mongodb:
+    hostname: mongodb
+    container_name: mongodb
+    image: mongo:latest
+    ports:
+      - 27018:27017
+
+  spark-master:
+    hostname: spark-master
+    container_name: spark-master
+    image: docker.io/bitnami/spark:3
+    user: root
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./spark:/home
+    depends_on:
+      - kafka
+      - mongodb
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      # tail -f /dev/null 
+      pip3 install -r /home/requirements.txt  
+      /opt/bitnami/spark/bin/spark-submit  --packages org.mongodb.spark:mongo-spark-connector_2.12:3.0.1 /home/spark.py
+      "
+    restart: on-failure
+
+  spark-worker:
+    hostname: spark-worker
+    container_name: spark-worker
+    image: docker.io/bitnami/spark:3
+    depends_on:
+      - spark-master
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=1G
+      - SPARK_WORKER_CORES=1
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+
+  dashboard:
+    hostname: dashboard
+    container_name: dashboard
+    image: python:3.7-slim
+    ports:
+      - "5006:5006"
+    depends_on:
+      - kafka
+    volumes:
+      - ./realtime_dashboard:/home
+    entrypoint: [ '/bin/sh', '-c' ]
+    command: |
+      "
+      pip3 install -r /home/requirements.txt  
+      bokeh serve /home/realtime_dashboard.py
+      "
+    restart: on-failure
