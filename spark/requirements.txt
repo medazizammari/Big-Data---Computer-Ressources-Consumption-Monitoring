@@ -1,0 +1,5 @@
+bson
+pymongo
+pyspark
+kafka-python
+pandas

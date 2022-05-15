@@ -1,0 +1,4 @@
+flask
+kafka-python
+websocket-client
+requests
